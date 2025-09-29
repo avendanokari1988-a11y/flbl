@@ -39,9 +39,14 @@ app.post('/api/session', (req, res) => {
   
   sessions.set(sessionId, sessionData);
   
-  // Notificar a todos los admins
+  // Notificar a TODOS los admins conectados - CORREGIDO
   io.emit('new_session', sessionData);
+  // También enviar la lista completa actualizada
+  const waitingSessions = Array.from(sessions.values()).filter(s => s.status === 'waiting');
+  io.emit('sessions_list', waitingSessions);
+  
   console.log(`📱 Nueva sesión: ${sessionId} - ${documentNumber}`);
+  console.log(`👥 Notificando a todos los admins conectados`);
   
   res.json({ success: true, sessionId });
 });
@@ -68,7 +73,7 @@ app.post('/api/session/:sessionId/redirect', (req, res) => {
     session.emailAddress = emailAddress;
     session.completedAt = Date.now();
     
-    // Notificar a todos los admins
+    // Notificar a TODOS los admins conectados - CORREGIDO
     io.emit('session_updated', session);
     
     // Notificar al usuario específico
@@ -89,7 +94,7 @@ io.on('connection', (socket) => {
     // Enviar todas las sesiones en espera al admin
     const waitingSessions = Array.from(sessions.values()).filter(s => s.status === 'waiting');
     socket.emit('sessions_list', waitingSessions);
-    console.log('👨‍💼 Admin conectado');
+    console.log('👨‍💼 Admin conectado, sesiones enviadas:', waitingSessions.length);
   });
   
   socket.on('user_connect', (sessionId) => {
