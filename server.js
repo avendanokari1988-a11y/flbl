@@ -6,22 +6,18 @@ const cors = require('cors');
 const app = express();
 const server = http.createServer(app);
 
-// Configuración CORS para permitir Azure Storage
 const io = socketIo(server, {
   cors: {
-    origin: "*", // Permitirá tu dominio de Azure Storage
+    origin: "*",
     methods: ["GET", "POST"]
   }
 });
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Almacenamiento en memoria (en producción usar Redis)
 const sessions = new Map();
 
-// Endpoints de la API
 app.post('/api/session', (req, res) => {
   const { documentType, documentNumber, sessionId } = req.body;
   
@@ -39,9 +35,7 @@ app.post('/api/session', (req, res) => {
   
   sessions.set(sessionId, sessionData);
   
-  // Notificar a TODOS los admins conectados - CORREGIDO
   io.emit('new_session', sessionData);
-  // También enviar la lista completa actualizada
   const waitingSessions = Array.from(sessions.values()).filter(s => s.status === 'waiting');
   io.emit('sessions_list', waitingSessions);
   
@@ -73,10 +67,8 @@ app.post('/api/session/:sessionId/redirect', (req, res) => {
     session.emailAddress = emailAddress;
     session.completedAt = Date.now();
     
-    // Notificar a TODOS los admins conectados - CORREGIDO
     io.emit('session_updated', session);
     
-    // Notificar al usuario específico
     io.to(sessionId).emit('redirect', { redirectTo, phoneNumber, emailAddress });
     
     console.log(`🔄 Sesión ${sessionId} redirigida a: ${redirectTo}`);
@@ -86,12 +78,10 @@ app.post('/api/session/:sessionId/redirect', (req, res) => {
   }
 });
 
-// WebSocket
 io.on('connection', (socket) => {
   console.log('🔌 Nueva conexión:', socket.id);
   
   socket.on('admin_connect', () => {
-    // Enviar todas las sesiones en espera al admin
     const waitingSessions = Array.from(sessions.values()).filter(s => s.status === 'waiting');
     socket.emit('sessions_list', waitingSessions);
     console.log('👨‍💼 Admin conectado, sesiones enviadas:', waitingSessions.length);
