@@ -35,12 +35,15 @@ app.post('/api/session', (req, res) => {
   
   sessions.set(sessionId, sessionData);
   
+  // Emitir nueva sesión a todos los admins
   io.emit('new_session', sessionData);
+  
+  // Enviar TODAS las sesiones en espera a los admins
   const waitingSessions = Array.from(sessions.values()).filter(s => s.status === 'waiting');
   io.emit('sessions_list', waitingSessions);
   
   console.log(`📱 Nueva sesión: ${sessionId} - ${documentNumber}`);
-  console.log(`👥 Notificando a todos los admins conectados`);
+  console.log(`👥 Sesiones activas: ${waitingSessions.length}`);
   
   res.json({ success: true, sessionId });
 });
